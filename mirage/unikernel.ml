@@ -36,7 +36,35 @@ module Client (S  : STACKV4) (CL : PCLOCK) (RES: Resolver_lwt.S) (CON: Conduit_m
     let sleep () = OS.Time.sleep_ns (Duration.of_sec 3) in
     Conduit_mirage.with_tls ctx >>= fun ctx ->
     let ctx = Cohttp_mirage.Client.ctx res ctx in
-    Acme.get_crt ~ctx ~directory:(Uri.of_string "https://acme-staging.api.letsencrypt.org/directory") ~solver sleep account_key csr >|= function
-    | Error e -> Logs.err (fun m -> m "error %s" e)
-    | Ok cert -> Logs.info (fun m -> m "certificate: %s" cert)
+    Acme.initialise ~ctx ~directory:(Uri.of_string "https://acme-staging.api.letsencrypt.org/directory") account_key >>= function
+    | Error e -> Logs.err (fun m -> m "error %s" e) ; Lwt.return_unit
+    | Ok t ->
+      Acme.sign_certificate ~ctx ~solver t sleep csr >|= function
+      | Error e -> Logs.err (fun m -> m "error %s" e)
+      | Ok cert -> Logs.info (fun m -> m "certificate: %s" cert)
+
+
+  (* part II:
+     establish an authenticated channel to receive signing requests and provide signed certificates
+     since we already use DNS in here, we use DNS as authenticated channel
+     not the unikernel which wants a certificate has to send us a nsupdate request with the csr
+     we communicate via http(s) with let's encrypt and nsupdate to the authoritative nameserver for solving the challenge
+     once we download the pem, we push it via nsupdate to the authoritative
+
+     plan b: act as a hidden dns secondary and receive notifies, sweep through the zone for signing requests without corresponding (non-expired) certificate
+
+     this means we've to care about tlsa *)
+
+  (*
+     we have additional logic/complexity, namely a DNS (TCP-only?) listener
+     we also need a dns key for the authentication (plan b says a transfer key)
+
+     Acme.initialise is done just after boot
+
+     then either for an nsupdate or for a notify is waited and acted upon
+
+     for each new tlsa record where selector = private and the content can be
+       parsed as csr with a domain name we have keys for (or update uses the
+       right key)
+ *)
 end
