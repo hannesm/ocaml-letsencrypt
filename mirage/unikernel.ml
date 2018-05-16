@@ -96,9 +96,16 @@ module Client (R : RANDOM) (P : PCLOCK) (M : MCLOCK) (T : TIME) (S : STACKV4) (R
     | Ok le ->
       let t =
         let data =
-          (* all we need is: key (do we need soa for zone? maybe?) *)
+          let zone = (* drop first two labels of dnskey *)
+            let arr = Dns_name.to_array key_name in
+            Dns_name.of_array Array.(sub arr 0 (length arr - 2))
+          in
+          let soa = 300l, { Dns_packet.nameserver = zone ; hostmaster = zone ;
+                            serial = 1l ; refresh = 300l ; retry = 300l ;
+                            expiry = 3000l ; minimum = 300l}
+          in
           Dns_trie.insert key_name Dns_map.(V (K.Dnskey, [ dnskey ]))
-            Dns_trie.empty
+            (Dns_trie.insert zone Dns_map.(V (K.Soa, soa)) Dns_trie.empty)
         in
         UDns_server.Primary.create ~a:[UDns_server.tsig_auth]
           ~tsig_verify:Dns_tsig.verify ~tsig_sign:Dns_tsig.sign
