@@ -38,7 +38,7 @@ module Client (R : RANDOM) (P : PCLOCK) (M : MCLOCK) (T : TIME) (S : STACKV4) (R
     let sleep () = OS.Time.sleep_ns (Duration.of_sec 3) in
     Conduit_mirage.with_tls ctx >>= fun ctx ->
     let ctx = Cohttp_mirage.Client.ctx res ctx in
-    Acme.initialise ~ctx ~directory:(Uri.of_string "https://acme-staging.api.letsencrypt.org/directory") account_key >>= function
+    Acme.initialise ~ctx ~directory:Letsencrypt.letsencrypt_staging_url account_key >>= function
     | Error e -> Logs.err (fun m -> m "error %s" e) ; Lwt.return_unit
     | Ok t ->
       Acme.sign_certificate ~ctx ~solver t sleep csr >|= function
@@ -80,18 +80,51 @@ module Client (R : RANDOM) (P : PCLOCK) (M : MCLOCK) (T : TIME) (S : STACKV4) (R
         | Ok name, Some dnskey -> (name, dnskey)
     in
     let account_key = gen_rsa (Key_gen.account_key_seed ()) in
-    let send data =
+    let send_and_wait data =
       let dst = Key_gen.dns_server () in
-      Logs.debug (fun m -> m "writing to %a: %a" Ipaddr.V4.pp_hum dst Cstruct.hexdump_pp data) ;
-      S.UDPV4.write ~dst ~dst_port:53 (S.udpv4 stack) data >>= function
-      | Ok () -> Lwt.return (Ok ())
+      Logs.debug (fun m -> m "writing to %a" Ipaddr.V4.pp_hum dst) ;
+      let tcp = S.tcpv4 stack in
+      S.TCPV4.create_connection tcp (dst, 53) >>= function
       | Error e ->
-        Logs.err (fun m -> m "failed to send nsupdate due to %a" S.UDPV4.pp_error e) ;
-        Lwt.return (Error (Fmt.to_to_string S.UDPV4.pp_error e))
+        Logs.err (fun m -> m "failed to create connection to NS: %a" S.TCPV4.pp_error e) ;
+        Lwt.return (Error (Fmt.to_to_string S.TCPV4.pp_error e))
+      | Ok flow ->
+        let hdr = Cstruct.create 2 in
+        Cstruct.BE.set_uint16 hdr 0 (Cstruct.len data) ;
+        S.TCPV4.write flow (Cstruct.append hdr data) >>= function
+        | Error e ->
+          Logs.err (fun m -> m "failed to write to NS: %a" S.TCPV4.pp_write_error e) ;
+          Lwt.return (Error (Fmt.to_to_string S.TCPV4.pp_write_error e))
+        | Ok () ->
+          (* we expect a single reply! *)
+          Dns.read_tcp (Dns.of_flow flow) >>= function
+          | Error () ->
+            Logs.err (fun m -> m "failed to read") ;
+            Lwt.return (Error "error while reading nsupdate reply")
+          | Ok buf ->
+            (* now verify that buf was a good one *)
+            match Dns_packet.decode buf with
+            | Error e ->
+              Logs.err (fun m -> m "error %a while decoding DNS answer"
+                           Dns_packet.pp_err e) ;
+              Lwt.return (Error (Fmt.to_to_string Dns_packet.pp_err e))
+            | Ok ((hdr, `Update u), Some off) when hdr.Dns_packet.rcode = Dns_enum.NoError ->
+              Logs.debug (fun m -> m "likely a good update") ;
+              (* should verify signature *)
+(*              let tsig = Cstruct.shift buf off in
+                if Dns_tsig.verify ~mac:??? <time> (`Update u) hdr <name> ~key:?? .. ?? then *)
+              Lwt.return (Ok ())
+(*              else
+                Lwt.return (Error "couldn't verify signature on nsupdate reply") *)
+            | Ok (t, _) ->
+              Logs.err (fun m -> m "bad update: %a" Dns_packet.pp t) ;
+              Lwt.return (Error "bad update")
+    (* in all cases: safely close flow! remove from in_flight (also retry on
+       connection failure [and exit on nsupdate notauth!?]) *)
     in
     Conduit_mirage.with_tls ctx >>= fun ctx ->
     let ctx = Cohttp_mirage.Client.ctx res ctx in
-    Acme.initialise ~ctx ~directory:(Uri.of_string "https://acme-staging.api.letsencrypt.org/directory") account_key >>= function
+    Acme.initialise ~ctx ~directory:Letsencrypt.letsencrypt_staging_url account_key >>= function
     | Error e -> Logs.err (fun m -> m "error %s" e) ; Lwt.return_unit
     | Ok le ->
       let t =
@@ -112,6 +145,7 @@ module Client (R : RANDOM) (P : PCLOCK) (M : MCLOCK) (T : TIME) (S : STACKV4) (R
           ~rng:R.generate data
       in
       let state = ref t in
+      (* TODO use a map with number of attempts *)
       let in_flight = ref Astring.String.Set.empty in
       Logs.info (fun m -> m "initialised lets encrypt") ;
 
@@ -154,12 +188,11 @@ module Client (R : RANDOM) (P : PCLOCK) (M : MCLOCK) (T : TIME) (S : STACKV4) (R
                         Logs.err (fun m -> m "request with %s already in-flight" nam)
                       else begin
                         in_flight := Astring.String.Set.add nam !in_flight ;
-                        (* TODO check csr commen name with name *)
                         (* request new cert in async *)
                         Lwt.async (fun () ->
                             let sleep () = OS.Time.sleep_ns (Duration.of_sec 3) in
                             let now = Ptime.v (P.now_d_ps pclock) in
-                            let solver = Letsencrypt.Client.default_dns_solver now send key_name dnskey in
+                            let solver = Letsencrypt.Client.default_dns_solver now send_and_wait key_name dnskey in
                             Acme.sign_certificate ~ctx ~solver le sleep csr >|= function
                             | Error e -> Logs.err (fun m -> m "error %s" e)
                             | Ok cert ->
