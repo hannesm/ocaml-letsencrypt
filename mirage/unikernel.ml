@@ -89,12 +89,9 @@ module Client (R : RANDOM) (P : PCLOCK) (M : MCLOCK) (T : TIME) (S : STACKV4) (R
         Logs.err (fun m -> m "failed to create connection to NS: %a" S.TCPV4.pp_error e) ;
         Lwt.return (Error (Fmt.to_to_string S.TCPV4.pp_error e))
       | Ok flow ->
-        let hdr = Cstruct.create 2 in
-        Cstruct.BE.set_uint16 hdr 0 (Cstruct.len data) ;
-        S.TCPV4.write flow (Cstruct.append hdr data) >>= function
-        | Error e ->
-          Logs.err (fun m -> m "failed to write to NS: %a" S.TCPV4.pp_write_error e) ;
-          Lwt.return (Error (Fmt.to_to_string S.TCPV4.pp_write_error e))
+        Dns.send_tcp flow data >>= function
+        | Error () ->
+          Lwt.return (Error "error while sending nsupdate")
         | Ok () ->
           (* we expect a single reply! *)
           Dns.read_tcp (Dns.of_flow flow) >>= function
