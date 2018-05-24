@@ -80,44 +80,36 @@ module Client (R : RANDOM) (P : PCLOCK) (M : MCLOCK) (T : TIME) (S : STACKV4) (R
         | Ok name, Some dnskey -> (name, dnskey)
     in
     let account_key = gen_rsa (Key_gen.account_key_seed ()) in
-    let send_and_wait data =
+    let flow = ref None in
+    let send_dns data =
       let dst = Key_gen.dns_server () in
       Logs.debug (fun m -> m "writing to %a" Ipaddr.V4.pp_hum dst) ;
       let tcp = S.tcpv4 stack in
-      S.TCPV4.create_connection tcp (dst, 53) >>= function
-      | Error e ->
-        Logs.err (fun m -> m "failed to create connection to NS: %a" S.TCPV4.pp_error e) ;
-        Lwt.return (Error (Fmt.to_to_string S.TCPV4.pp_error e))
-      | Ok flow ->
-        Dns.send_tcp flow data >>= function
-        | Error () ->
-          Lwt.return (Error "error while sending nsupdate")
-        | Ok () ->
-          (* we expect a single reply! *)
-          Dns.read_tcp (Dns.of_flow flow) >>= function
-          | Error () ->
-            Logs.err (fun m -> m "failed to read") ;
-            Lwt.return (Error "error while reading nsupdate reply")
-          | Ok buf ->
-            (* now verify that buf was a good one *)
-            match Dns_packet.decode buf with
+      let rec send again =
+        match !flow with
+        | None ->
+          if again then
+            S.TCPV4.create_connection tcp (dst, 53) >>= function
             | Error e ->
-              Logs.err (fun m -> m "error %a while decoding DNS answer"
-                           Dns_packet.pp_err e) ;
-              Lwt.return (Error (Fmt.to_to_string Dns_packet.pp_err e))
-            | Ok ((hdr, `Update u), Some off) when hdr.Dns_packet.rcode = Dns_enum.NoError ->
-              Logs.debug (fun m -> m "likely a good update") ;
-              (* should verify signature *)
-(*              let tsig = Cstruct.shift buf off in
-                if Dns_tsig.verify ~mac:??? <time> (`Update u) hdr <name> ~key:?? .. ?? then *)
-              Lwt.return (Ok ())
-(*              else
-                Lwt.return (Error "couldn't verify signature on nsupdate reply") *)
-            | Ok (t, _) ->
-              Logs.err (fun m -> m "bad update: %a" Dns_packet.pp t) ;
-              Lwt.return (Error "bad update")
-    (* in all cases: safely close flow! remove from in_flight (also retry on
-       connection failure [and exit on nsupdate notauth!?]) *)
+              Logs.err (fun m -> m "failed to create connection to NS: %a" S.TCPV4.pp_error e) ;
+              Lwt.return (Error (Fmt.to_to_string S.TCPV4.pp_error e))
+            | Ok f -> flow := Some f ; send false
+          else
+            Lwt.return_error "couldn't reach authoritative nameserver"
+        | Some f ->
+          Dns.send_tcp f data >>= function
+          | Error () -> flow := None ; send (not again)
+          | Ok () -> Lwt.return_ok ()
+      in
+      send true
+    and recv_dns () =
+      (* we expect a single reply! *)
+      match !flow with
+      | None -> Lwt.return_error "no TCP flow"
+      | Some f ->
+        Dns.read_tcp (Dns.of_flow f) >|= function
+        | Ok data -> Ok data
+        | Error () -> Error "error while reading from flow"
     in
     Conduit_mirage.with_tls ctx >>= fun ctx ->
     let ctx = Cohttp_mirage.Client.ctx res ctx in
@@ -189,7 +181,7 @@ module Client (R : RANDOM) (P : PCLOCK) (M : MCLOCK) (T : TIME) (S : STACKV4) (R
                         Lwt.async (fun () ->
                             let sleep () = OS.Time.sleep_ns (Duration.of_sec 3) in
                             let now = Ptime.v (P.now_d_ps pclock) in
-                            let solver = Letsencrypt.Client.default_dns_solver now send_and_wait key_name dnskey in
+                            let solver = Letsencrypt.Client.default_dns_solver now send_dns ~recv:recv_dns key_name dnskey in
                             Acme.sign_certificate ~ctx ~solver le sleep csr >|= function
                             | Error e -> Logs.err (fun m -> m "error %s" e)
                             | Ok cert ->
