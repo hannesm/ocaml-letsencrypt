@@ -39,6 +39,7 @@ let packages = [
   package "letsencrypt" ;
   package ~sublibs:[ "mirage" ; "server" ] "udns" ;
   package "hex" ;
+  package "randomconv" ;
 ]
 
 let client =

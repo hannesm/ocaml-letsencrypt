@@ -38,7 +38,8 @@ module Client (R : RANDOM) (P : PCLOCK) (M : MCLOCK) (T : TIME) (S : STACKV4) (R
       | Error e -> Lwt.return (Error (Fmt.to_to_string S.UDPV4.pp_error e))
     in
     let now = Ptime.v (P.now_d_ps pclock) in
-    let solver = Letsencrypt.Client.default_dns_solver now send name dnskey in
+    let id = Randomconv.int16 R.generate in
+    let solver = Letsencrypt.Client.default_dns_solver id now send name dnskey in
     let sleep () = OS.Time.sleep_ns (Duration.of_sec 3) in
     Conduit_mirage.with_tls ctx >>= fun ctx ->
     let ctx = Cohttp_mirage.Client.ctx res ctx in
@@ -178,7 +179,8 @@ module Client (R : RANDOM) (P : PCLOCK) (M : MCLOCK) (T : TIME) (S : STACKV4) (R
         Lwt.async (fun () ->
             let sleep () = OS.Time.sleep_ns (Duration.of_sec 3) in
             let now = Ptime.v (P.now_d_ps pclock) in
-            let solver = Letsencrypt.Client.default_dns_solver now send_dns ~recv:recv_dns key_name dnskey in
+            let id = Randomconv.int16 R.generate in
+            let solver = Letsencrypt.Client.default_dns_solver id now send_dns ~recv:recv_dns key_name dnskey in
             Acme.sign_certificate ~ctx ~solver le sleep csr >>= function
             | Error e ->
               Logs.err (fun m -> m "error %s, removing %a from in_flight" e Dns_name.pp name) ;
@@ -210,10 +212,12 @@ module Client (R : RANDOM) (P : PCLOCK) (M : MCLOCK) (T : TIME) (S : STACKV4) (R
                   and update = remove @ [ add ]
                   in
                   { Dns_packet.zone ; prereq = [] ; update ; addition = []}
-                and header = { Dns_packet.id = 0xDEAD ; query = true ; operation = Dns_enum.Update ;
-                               authoritative = false ; truncation = false ; recursion_desired = false ;
-                               recursion_available = false ; authentic_data = false ; checking_disabled = false ;
-                               rcode = Dns_enum.NoError }
+                and header =
+                  let id = Randomconv.int16 R.generate in
+                  { Dns_packet.id ; query = true ; operation = Dns_enum.Update ;
+                    authoritative = false ; truncation = false ; recursion_desired = false ;
+                    recursion_available = false ; authentic_data = false ; checking_disabled = false ;
+                    rcode = Dns_enum.NoError }
                 in
                 match Dns_tsig.encode_and_sign ~proto:`Tcp (header, `Update nsupdate) now dnskey key_name with
                 | Error msg ->
