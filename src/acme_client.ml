@@ -121,7 +121,7 @@ let default_dns_solver ?proto id now out ?recv keyname key =
                    recursion_available = false ; authentic_data = false ; checking_disabled = false ;
                    rcode = Dns_enum.NoError }
     in
-    match Dns_tsig.encode_and_sign ?proto (header, `Update nsupdate) now key keyname with
+    match Dns_tsig.encode_and_sign ?proto header (`Update nsupdate) now key keyname with
     | Error msg -> Lwt.return_error msg
     | Ok (data, mac) ->
       out data >>= function
@@ -134,7 +134,7 @@ let default_dns_solver ?proto id now out ?recv keyname key =
           | Ok data ->
             match Dns_tsig.decode_and_verify now key keyname ~mac data with
             | Error e -> Error e
-            | Ok ((header, _), _) ->
+            | Ok ((header, _, _, _), _) ->
               if header.Dns_packet.rcode = Dns_enum.NoError then
                 Ok ()
               else

@@ -219,7 +219,7 @@ module Client (R : RANDOM) (P : PCLOCK) (M : MCLOCK) (T : TIME) (S : STACKV4) (R
                     recursion_available = false ; authentic_data = false ; checking_disabled = false ;
                     rcode = Dns_enum.NoError }
                 in
-                match Dns_tsig.encode_and_sign ~proto:`Tcp (header, `Update nsupdate) now dnskey key_name with
+                match Dns_tsig.encode_and_sign ~proto:`Tcp header (`Update nsupdate) now dnskey key_name with
                 | Error msg ->
                   in_flight := Dns_name.DomSet.remove name !in_flight ;
                   Logs.err (fun m -> m "Error while encoding and signing %s" msg) ;
@@ -242,7 +242,7 @@ module Client (R : RANDOM) (P : PCLOCK) (M : MCLOCK) (T : TIME) (S : STACKV4) (R
                       match Dns_tsig.decode_and_verify now dnskey key_name ~mac data with
                       | Error e ->
                         Logs.err (fun m -> m "error %s while decoding nsupdate answer" e)
-                      | Ok ((header, _), _) ->
+                      | Ok ((header, _, _, _), _) ->
                         if header.Dns_packet.rcode = Dns_enum.NoError then
                           ()
                         else
