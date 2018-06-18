@@ -103,12 +103,9 @@ let dns_solver writef =
 
 let default_dns_solver ?proto id now out ?recv keyname key =
   let nsupdate host record =
-    let name = Dns_name.prepend_exn ~hostname:false (Dns_name.of_string_exn host) "_acme-challenge" in
+    let name = Domain_name.prepend_exn ~hostname:false (Domain_name.of_string_exn host) "_acme-challenge" in
     let nsupdate =
-      let q_name =
-        let a = Dns_name.to_array keyname in
-        Dns_name.of_array (Array.sub a 0 (Array.length a - 2))
-      in
+      let q_name = Domain_name.drop_labels_exn ~amount:2 keyname in
       let zone = { Dns_packet.q_name ; q_type = Dns_enum.SOA }
       and update = [
         Dns_packet.Remove (name, Dns_enum.TXT) ;
