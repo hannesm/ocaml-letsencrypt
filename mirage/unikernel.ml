@@ -22,7 +22,7 @@ module Client (R : RANDOM) (P : PCLOCK) (M : MCLOCK) (T : TIME) (S : STACKV4) (R
         begin match Astring.String.cut ~sep:":" str with
           | None -> invalid_arg "couldn't parse dnskey"
           | Some (name, key) ->
-            match Dns_name.of_string ~hostname:false name, Dns_packet.dnskey_of_string key with
+            match Domain_name.of_string ~hostname:false name, Dns_packet.dnskey_of_string key with
             | Error _, _ | _, None -> invalid_arg "failed to parse dnskey"
             | Ok name, Some dnskey -> (name, dnskey)
         end
@@ -110,24 +110,21 @@ module Client (R : RANDOM) (P : PCLOCK) (M : MCLOCK) (T : TIME) (S : STACKV4) (R
           match Astring.String.cut ~sep:":" str_key with
           | None -> invalid_arg "couldn't parse dnskey"
           | Some (name, key) ->
-            match Dns_name.of_string ~hostname:false name, Dns_packet.dnskey_of_string key with
+            match Domain_name.of_string ~hostname:false name, Dns_packet.dnskey_of_string key with
             | Error _, _ | _, None -> invalid_arg "failed to parse dnskey"
             | Ok key_name, Some dnskey ->
               let up =
                 if Astring.String.is_infix ~affix:"update" name then
-                  let zone =
-                    let arr = Dns_name.to_array key_name in
-                    Dns_name.of_array Array.(sub arr 0 (length arr - 2))
-                  in
-                  Dns_name.DomMap.add zone (key_name, dnskey) up
+                  let zone = Domain_name.drop_labels_exn ~amount:2 key_name in
+                  Domain_name.Map.add zone (key_name, dnskey) up
                 else
                   up
               in
               (up, (key_name, dnskey) :: keys))
-        (Dns_name.DomMap.empty, []) (Key_gen.dns_keys ())
+        (Domain_name.Map.empty, []) (Key_gen.dns_keys ())
     in
     let dns_secondary =
-      UDns_server.Secondary.create ~a:[ UDns_server.tsig_auth ]
+      UDns_server.Secondary.create ~a:[ UDns_server.Authentication.tsig_auth ]
         ~tsig_verify:Dns_tsig.verify ~tsig_sign:Dns_tsig.sign
         ~rng:R.generate dns_keys
     in
@@ -168,13 +165,13 @@ module Client (R : RANDOM) (P : PCLOCK) (M : MCLOCK) (T : TIME) (S : STACKV4) (R
     in
 
     (* TODO use a map with number of attempts *)
-    let in_flight = ref Dns_name.DomSet.empty in
+    let in_flight = ref Domain_name.Set.empty in
     let request_certificate server le ctx zone name (key_name, dnskey) csr =
-      if Dns_name.DomSet.mem name !in_flight then
-        Logs.err (fun m -> m "request with %a already in-flight" Dns_name.pp name)
+      if Domain_name.Set.mem name !in_flight then
+        Logs.err (fun m -> m "request with %a already in-flight" Domain_name.pp name)
       else begin
-        Logs.info (fun m -> m "running let's encrypt service for %a, adding to in_flight %a" Dns_name.pp name Fmt.(list ~sep:(unit ",@ ") Dns_name.pp) (Dns_name.DomSet.elements !in_flight)) ;
-        in_flight := Dns_name.DomSet.add name !in_flight ;
+        Logs.info (fun m -> m "running let's encrypt service for %a, adding to in_flight %a" Domain_name.pp name Fmt.(list ~sep:(unit ",@ ") Domain_name.pp) (Domain_name.Set.elements !in_flight)) ;
+        in_flight := Domain_name.Set.add name !in_flight ;
         (* request new cert in async *)
         Lwt.async (fun () ->
             let sleep () = OS.Time.sleep_ns (Duration.of_sec 3) in
@@ -183,16 +180,16 @@ module Client (R : RANDOM) (P : PCLOCK) (M : MCLOCK) (T : TIME) (S : STACKV4) (R
             let solver = Letsencrypt.Client.default_dns_solver id now send_dns ~recv:recv_dns key_name dnskey in
             Acme.sign_certificate ~ctx ~solver le sleep csr >>= function
             | Error e ->
-              Logs.err (fun m -> m "error %s, removing %a from in_flight" e Dns_name.pp name) ;
-              in_flight := Dns_name.DomSet.remove name !in_flight ;
+              Logs.err (fun m -> m "error %s, removing %a from in_flight" e Domain_name.pp name) ;
+              in_flight := Domain_name.Set.remove name !in_flight ;
               Lwt.return_unit
             | Ok cert ->
               let certificate = X509.Encoding.cs_of_cert cert in
-              Logs.info (fun m -> m "certificate received for %a" Dns_name.pp name) ;
-              match Dns_trie.lookup_direct name Dns_map.K.Tlsa (UDns_server.Secondary.data server) with
+              Logs.info (fun m -> m "certificate received for %a" Domain_name.pp name) ;
+              match Dns_trie.lookup name Dns_map.Tlsa (UDns_server.Secondary.data server) with
               | Error e ->
-                Logs.err (fun m -> m "couldn't find tlsa for %a: %a, removing from in_flight" Dns_name.pp name Dns_trie.pp_e e) ;
-                in_flight := Dns_name.DomSet.remove name !in_flight ;
+                Logs.err (fun m -> m "couldn't find tlsa for %a: %a, removing from in_flight" Domain_name.pp name Dns_trie.pp_e e) ;
+                in_flight := Domain_name.Set.remove name !in_flight ;
                 Lwt.return_unit
               | Ok (ttl, tlsas) ->
                 let nsupdate =
@@ -221,24 +218,24 @@ module Client (R : RANDOM) (P : PCLOCK) (M : MCLOCK) (T : TIME) (S : STACKV4) (R
                 in
                 match Dns_tsig.encode_and_sign ~proto:`Tcp header (`Update nsupdate) now dnskey key_name with
                 | Error msg ->
-                  in_flight := Dns_name.DomSet.remove name !in_flight ;
+                  in_flight := Domain_name.Set.remove name !in_flight ;
                   Logs.err (fun m -> m "Error while encoding and signing %s" msg) ;
                   Lwt.return_unit
                 | Ok (data, mac) ->
                   send_dns data >>= function
                   | Error e ->
                     (* TODO: should retry DNS send *)
-                    in_flight := Dns_name.DomSet.remove name !in_flight ;
+                    in_flight := Domain_name.Set.remove name !in_flight ;
                     Logs.err (fun m -> m "error %s while sending nsupdate" e) ;
                     Lwt.return_unit
                   | Ok () ->
                     recv_dns () >|= function
                     | Error e ->
                       (* TODO: should retry DNS send *)
-                      in_flight := Dns_name.DomSet.remove name !in_flight ;
+                      in_flight := Domain_name.Set.remove name !in_flight ;
                       Logs.err (fun m -> m "error %s while reading DNS" e)
                     | Ok data ->
-                      in_flight := Dns_name.DomSet.remove name !in_flight ;
+                      in_flight := Domain_name.Set.remove name !in_flight ;
                       match Dns_tsig.decode_and_verify now dnskey key_name ~mac data with
                       | Error e ->
                         Logs.err (fun m -> m "error %s while decoding nsupdate answer" e)
@@ -260,8 +257,8 @@ module Client (R : RANDOM) (P : PCLOCK) (M : MCLOCK) (T : TIME) (S : STACKV4) (R
       Logs.info (fun m -> m "initialised lets encrypt") ;
       let on_update t =
         List.iter (fun zone ->
-            match Dns_name.DomMap.find_opt zone update_keys with
-            | None -> Logs.err (fun m -> m "can't deal with %a, no update key" Dns_name.pp zone)
+            match Domain_name.Map.find zone update_keys with
+            | None -> Logs.err (fun m -> m "can't deal with %a, no update key" Domain_name.pp zone)
             | Some key ->
               let react_change name (_, tlsas) () =
                 match
@@ -279,11 +276,11 @@ module Client (R : RANDOM) (P : PCLOCK) (M : MCLOCK) (T : TIME) (S : STACKV4) (R
                       match List.find (function `CN _ -> true | _ -> false) (X509.CA.info csr).X509.CA.subject with
                       | exception Not_found -> Logs.err (fun m -> m "cannot find name of signing request")
                       | `CN nam ->
-                        begin match Dns_name.of_string nam with
+                        begin match Domain_name.of_string nam with
                           | Error (`Msg msg) -> Logs.err (fun m -> m "error %s while creating domain name of %s" msg nam)
                           | Ok dns_name ->
-                            if not (Dns_name.equal dns_name name) then
-                              Logs.err (fun m -> m "csr cn %a doesn't match dns %a" Dns_name.pp dns_name Dns_name.pp name)
+                            if not (Domain_name.equal dns_name name) then
+                              Logs.err (fun m -> m "csr cn %a doesn't match dns %a" Domain_name.pp dns_name Domain_name.pp name)
                             else
                               request_certificate t le ctx zone dns_name key csr
                         end
@@ -291,7 +288,7 @@ module Client (R : RANDOM) (P : PCLOCK) (M : MCLOCK) (T : TIME) (S : STACKV4) (R
                   end
                 | _, _ -> Logs.err (fun m -> m "not prepared for this task")
               in
-              match Dns_trie.folde zone Dns_map.K.Tlsa (UDns_server.Secondary.data t) react_change () with
+              match Dns_trie.folde zone Dns_map.Tlsa (UDns_server.Secondary.data t) react_change () with
               | Ok () -> ()
               | Error e -> Logs.warn (fun m -> m "error %a while folding" Dns_trie.pp_e e))
           (UDns_server.Secondary.zones t) ;
