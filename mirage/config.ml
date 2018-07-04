@@ -42,6 +42,8 @@ let net =
     (socket_stackv4 [Ipaddr.V4.any])
     (static_ipv4_stack ~config:address ~arp:farp default_network)
 
+let logger = syslog_udp ~config:(syslog_config ~truncate:1484 "letsencrypt") net
+
 let packages = [
   package "x509" ;
   package "duration" ;
@@ -54,7 +56,7 @@ let packages = [
 ]
 
 let client =
-  foreign ~deps:[abstract nocrypto] ~keys ~packages "Unikernel.Client" @@
+  foreign ~deps:[abstract nocrypto ; abstract logger] ~keys ~packages "Unikernel.Client" @@
   random @-> pclock @-> mclock @-> time @-> stackv4 @-> resolver @-> conduit @-> job
 
 let () =

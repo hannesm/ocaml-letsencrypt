@@ -106,7 +106,7 @@ module Client (R : RANDOM) (P : PCLOCK) (M : MCLOCK) (T : TIME) (S : STACKV4) (R
 
   module Dns_server = Dns_mirage_server.Make(P)(M)(T)(S)
 
-  let start _random pclock mclock _ stack res ctx _ =
+  let start _random pclock mclock _ stack res ctx _ _ =
     let update_keys, dns_keys =
       List.fold_left (fun (up, keys) str_key ->
           match Astring.String.cut ~sep:":" str_key with
