@@ -31,6 +31,17 @@ let keys = Key.[
     abstract account_key_seed ; abstract cert_key_seed
   ]
 
+let address =
+  let network = Ipaddr.V4.Prefix.of_address_string_exn "10.0.42.10/24"
+  and gateway = Ipaddr.V4.of_string "10.0.42.1"
+  in
+  { network ; gateway }
+
+let net =
+  if_impl Key.is_unix
+    (socket_stackv4 [Ipaddr.V4.any])
+    (static_ipv4_stack ~config:address ~arp:farp default_network)
+
 let packages = [
   package "x509" ;
   package "duration" ;
@@ -46,18 +57,8 @@ let client =
   foreign ~deps:[abstract nocrypto] ~keys ~packages "Unikernel.Client" @@
   random @-> pclock @-> mclock @-> time @-> stackv4 @-> resolver @-> conduit @-> job
 
-let address =
-  let network = Ipaddr.V4.Prefix.of_address_string_exn "10.0.42.10/24"
-  and gateway = Ipaddr.V4.of_string "10.0.42.1"
-  in
-  { network ; gateway }
-
-let net =
-  if_impl Key.is_unix
-    (socket_stackv4 [Ipaddr.V4.any])
-    (static_ipv4_stack ~config:address ~arp:farp default_network)
-
 let () =
   let res_dns = resolver_dns net in
   let conduit = conduit_direct net in
-  register "letsencrypt-client" [ client $ default_random $ default_posix_clock $ default_monotonic_clock $ default_time $ net $ res_dns $ conduit ]
+  register "letsencrypt-client"
+    [ client $ default_random $ default_posix_clock $ default_monotonic_clock $ default_time $ net $ res_dns $ conduit ]
