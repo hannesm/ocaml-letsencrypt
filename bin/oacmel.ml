@@ -87,7 +87,7 @@ let key =
 
 let endpoint =
   let doc = "ACME endpoint" in
-  Arg.(value & opt string (Uri.to_string Acme_common.letsencrypt_staging_url) & info ["endpoint"] ~doc)
+  Arg.(value & opt string (Uri.to_string Acme_common.letsencrypt_url) & info ["endpoint"] ~doc)
 
 let cert =
   let doc = "filename where to store the certificate" in

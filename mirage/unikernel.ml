@@ -253,7 +253,7 @@ module Client (R : RANDOM) (P : PCLOCK) (M : MCLOCK) (T : TIME) (S : STACKV4) (R
     let account_key = gen_rsa (Key_gen.account_key_seed ()) in
     Conduit_mirage.with_tls ctx >>= fun ctx ->
     let ctx = Cohttp_mirage.Client.ctx res ctx in
-    Acme.initialise ~ctx ~directory:Letsencrypt.letsencrypt_staging_url account_key >>= function
+    Acme.initialise ~ctx ~directory:Letsencrypt.letsencrypt_url account_key >>= function
     | Error e -> Logs.err (fun m -> m "error %s" e) ; Lwt.return_unit
     | Ok le ->
       Logs.info (fun m -> m "initialised lets encrypt") ;
