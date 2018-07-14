@@ -142,7 +142,8 @@ let default_dns_solver ?proto id now out ?recv keyname key =
               if header.Dns_packet.rcode = Dns_enum.NoError then
                 Ok ()
               else
-                Error ("expected noerror, got " ^ Dns_enum.rcode_to_string header.Dns_packet.rcode)
+                Error ("expected noerror reply, got " ^
+                       Fmt.to_to_string Dns_enum.pp_rcode header.Dns_packet.rcode)
   in
   dns_solver nsupdate
 
