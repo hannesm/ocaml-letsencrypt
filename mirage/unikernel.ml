@@ -5,7 +5,7 @@ open Lwt.Infix
 module Client (R : RANDOM) (P : PCLOCK) (M : MCLOCK) (T : TIME) (S : STACKV4) (RES: Resolver_lwt.S) (CON: Conduit_mirage.S)= struct
   module Acme = Letsencrypt.Client.Make (Cohttp_mirage.Client)
 
-  module Dns = Dns_mirage.Make(R)(P)(M)(T)(S)
+  module Dns = Dns_mirage.Make(S)
 
   (* goes along, generates a private key, and a csr with hostname, the initiates
    http connection to let's encrypt staging, dns challenge, nsupdate, retrieves
@@ -103,6 +103,8 @@ module Client (R : RANDOM) (P : PCLOCK) (M : MCLOCK) (T : TIME) (S : STACKV4) (R
     | _ ->
       Logs.err (fun m -> m "couldn't parse csr or cert, returning false from matches") ;
       false
+
+  module Dns_server = Dns_mirage_server.Make(P)(M)(T)(S)
 
   let start _random pclock mclock _ stack res ctx _ =
     let update_keys, dns_keys =
@@ -244,7 +246,7 @@ module Client (R : RANDOM) (P : PCLOCK) (M : MCLOCK) (T : TIME) (S : STACKV4) (R
                           ()
                         else
                           (* TODO: if badtime, adjust our time (to the other time) and resend ;) *)
-                          Logs.err (fun m -> m "expected noerror, got %s" (Dns_enum.rcode_to_string header.Dns_packet.rcode)))
+                          Logs.err (fun m -> m "expected noerror, got %a" Dns_enum.pp_rcode header.Dns_packet.rcode))
       end
     in
 
@@ -294,6 +296,6 @@ module Client (R : RANDOM) (P : PCLOCK) (M : MCLOCK) (T : TIME) (S : STACKV4) (R
           (UDns_server.Secondary.zones t) ;
         Lwt.return_unit
       in
-      Dns.secondary ~on_update stack pclock mclock dns_secondary ;
+      Dns_server.secondary ~on_update stack pclock mclock dns_secondary ;
       S.listen stack
 end

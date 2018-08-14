@@ -48,7 +48,7 @@ let packages = [
   package "logs" ;
   package "cohttp-mirage" ;
   package "letsencrypt" ;
-  package ~sublibs:[ "mirage" ; "server" ] "udns" ;
+  package ~sublibs:[ "mirage.server" ; "server" ] "udns" ;
   package "hex" ;
   package "randomconv" ;
 ]
