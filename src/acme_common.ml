@@ -7,19 +7,17 @@ type directory_t = {
 }
 
 let domains_of_csr csr =
-  let flat_map f xs = List.map f xs |> List.concat in
-  let info = X509.CA.info csr in
+  let open X509 in
+  let info = CA.info csr in
   let subject_alt_names =
-    info.X509.CA.extensions
-    |> flat_map (function
-        | `Extensions extensions -> List.map snd extensions
-        | `Name _ | `Password _ -> [])
-    |> flat_map (function
-        | `Subject_alt_name names -> names
-        | _ -> [])
-    |> List.map (function
-        | `DNS name -> name
-        | _ -> assert false)
+    match List.find_opt (function `Extensions _ -> true | _ -> false) info.X509.CA.extensions with
+    | Some (`Extensions exts) ->
+      begin match Extension.(find Subject_alt_name exts) with
+        | None -> []
+        | Some (_, things) ->
+          List.(concat (map (function `DNS name -> [ name ] | _ -> []) things))
+      end
+    | _ -> []
   in
   match subject_alt_names with
   | [] ->
