@@ -23,5 +23,5 @@ module Make (Client : Cohttp_lwt.S.Client) : sig
   val sign_certificate : ?ctx:Client.ctx ->
     ?solver:solver_t -> t -> (unit -> unit Lwt.t) ->
     X509.CA.signing_request ->
-    (X509.t, [ `Msg of string ]) result Lwt.t
+    (X509.Certificate.t, [ `Msg of string ]) result Lwt.t
 end

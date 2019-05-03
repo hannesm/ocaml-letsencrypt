@@ -2,8 +2,6 @@ open Lwt.Infix
 
 open Acme_common
 
-module Pem = X509.Encoding.Pem
-
 type t = {
   account_key : Nocrypto.Rsa.priv ;
   mutable next_nonce : string ;
@@ -329,13 +327,14 @@ let rec poll_until ?ctx sleep cli challenge =
 
 let body_to_certificate der =
   let der = Cstruct.of_string der in
-  match X509.Encoding.parse der with
-  | Some crt -> Ok crt
-  | None -> Error (`Msg "I got gibberish while trying to decode the new certificate.")
+  match X509.Certificate.decode_der der with
+  | Ok crt -> Ok crt
+  | Error (`Parse e) ->
+    Error (`Msg ("I got gibberish while trying to decode the new certificate: " ^ e))
 
 let new_cert ?ctx cli csr =
   let url = cli.d.new_cert in
-  let der = X509.Encoding.cs_of_signing_request csr |> Cstruct.to_string |> B64u.urlencode in
+  let der = X509.CA.encode_der csr |> Cstruct.to_string |> B64u.urlencode in
   let data = Printf.sprintf {|{"resource": "new-cert", "csr": "%s"}|} der in
   http_post_jws ?ctx cli data url >|= function
   | Error e -> Error e
