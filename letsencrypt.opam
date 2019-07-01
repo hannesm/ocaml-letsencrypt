@@ -18,7 +18,6 @@ depends: [
   "cmdliner"
   "cohttp"
   "cohttp-lwt"
-  "cohttp-lwt-unix" {>= "1.0.0"}
   "zarith"
   "logs"
   "fmt"
