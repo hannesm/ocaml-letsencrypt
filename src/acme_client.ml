@@ -108,11 +108,17 @@ let dns_solver writef =
     solve_challenge = solve_dns01_challenge
   }
 
-let default_dns_solver ?proto id now out ?recv ~keyname key ~zone =
+let default_dns_solver ?proto id now out ?recv ~keyname key ~zone:_ =
   let open Dns in
   let nsupdate host record =
-    let name = Domain_name.prepend_label_exn (Domain_name.of_string_exn host) "_acme-challenge" in
-    let zone = Packet.Question.create zone Rr_map.Soa
+    let host = Domain_name.of_string_exn host in
+    let name = Domain_name.prepend_label_exn host "_acme-challenge" in
+    let my_zone = match Domain_name.count_labels host with
+      | 0 | 1 -> assert false
+      | 2 -> host
+      | _ -> Domain_name.drop_label_exn host
+    in
+    let zone = Packet.Question.create my_zone Rr_map.Soa
     and update =
       let up =
         Domain_name.Map.singleton name
