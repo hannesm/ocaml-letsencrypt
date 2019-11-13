@@ -350,10 +350,12 @@ let sign_certificate ?ctx ?(solver = default_http_solver) cli sleep csr =
     (fun r name ->
        match r with
        | Ok () ->
+         Logs.info (fun m -> m "LE for %s" name);
          new_authz ?ctx cli name solver.get_challenge >>= fun challenge ->
          solver.solve_challenge sleep cli challenge name >>= fun () ->
          challenge_met ?ctx cli solver.name challenge >>= fun () ->
-         poll_until ?ctx sleep cli challenge
+         poll_until ?ctx sleep cli challenge >|= fun () ->
+         Logs.info (fun m -> m "LE for %s finished" name)
        | Error r -> Lwt.return_error r)
     (Ok ()) (domains_of_csr csr) >>= fun () ->
   new_cert ?ctx cli csr >>= fun pem ->
