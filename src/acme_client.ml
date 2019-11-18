@@ -112,6 +112,7 @@ let default_dns_solver ?proto id now out ?recv ~keyname key ~zone =
   let open Dns in
   let nsupdate host record =
     let name = Domain_name.prepend_label_exn (Domain_name.of_string_exn host) "_acme-challenge" in
+    Logs.info (fun m -> m "solving dns by update to! %a (name %a)" Domain_name.pp zone Domain_name.pp name);
     let zone = Packet.Question.create zone Rr_map.Soa
     and update =
       let up =
@@ -352,8 +353,11 @@ let sign_certificate ?ctx ?(solver = default_http_solver) cli sleep csr =
        | Ok () ->
          Logs.info (fun m -> m "LE for %s" name);
          new_authz ?ctx cli name solver.get_challenge >>= fun challenge ->
+         Logs.info (fun m -> m "LE got challenge %s" name);
          solver.solve_challenge sleep cli challenge name >>= fun () ->
+         Logs.info (fun m -> m "LE solver solved! %s" name);
          challenge_met ?ctx cli solver.name challenge >>= fun () ->
+         Logs.info (fun m -> m "LE challenge met, polling! %s" name);
          poll_until ?ctx sleep cli challenge >|= fun () ->
          Logs.info (fun m -> m "LE for %s finished" name)
        | Error r -> Lwt.return_error r)
